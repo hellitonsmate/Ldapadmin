@@ -1,4 +1,7 @@
 import ldap
+import ldap.modlist as modlist # Para construir listas de modificação
+# from ldap.controls import PasswordPolicyControl # Para políticas de senha, se aplicável
+
 
 def connect_ldap(config):
     conn = ldap.initialize(config['LDAP_SERVER_URI'])
