@@ -109,6 +109,103 @@ def edit_user_form_route(username):
             conn.unbind_s()
     
     return render_template('user_form.html', user_data=user_data, all_groups=all_groups, user_groups_dns=user_groups_dns)
+@app.route('/users/new', methods=['POST'])
+@requires_auth
+def create_user_route():
+    # Obter dados do formulário
+    uid = request.form.get('uid')
+    given_name = request.form.get('givenName')
+    sn = request.form.get('sn')
+    cn = request.form.get('cn') # Ou gere a partir de givenName + sn
+    mail = request.form.get('mail')
+    password = request.form.get('userPassword')
+    confirm_password = request.form.get('confirmPassword')
+    selected_group_dns = request.form.getlist('groups') # Lista de DNs dos grupos selecionados
+
+    if password != confirm_password:
+        flash("As senhas não coincidem!", "danger")
+        # Re-renderizar o formulário com os dados preenchidos e grupos
+        conn_temp = None
+        all_groups = []
+        try:
+            conn_temp = get_ldap_connection()
+            group_base_dn = app.config.get('LDAP_GROUP_BASE_DN', 'ou=groups,' + app.config['LDAP_BASE_DN'])
+            all_groups = ldap_utils.get_all_groups(conn_temp, group_base_dn)
+        except ldap.LDAPError as e_grp:
+             flash(f"Erro ao recarregar grupos: {str(e_grp)}", "warning")
+        finally:
+            if conn_temp: conn_temp.unbind_s()
+        # Recria o user_data com o que foi submetido para repopular o formulário
+        current_form_data_for_template = {
+            'uid': [uid], 'givenName': [given_name], 'sn': [sn], 'cn': [cn], 'mail': [mail]
+        }
+        return render_template('user_form.html', all_groups=all_groups, user_data=current_form_data_for_template, user_groups_dns=selected_group_dns)
+
+
+    # Construir DN do novo usuário
+    # Ex: "uid=novo_usuario,ou=users,dc=example,dc=com"
+    user_dn = f"uid={ldap.filter.escape_filter_chars(uid)},{app.config['LDAP_USER_BASE_DN']}"
+
+    # Atributos do usuário
+    # Ajuste os objectClass conforme seu schema (ex: inetOrgPerson, posixAccount, top)
+    user_attrs = {
+        'objectClass': [b'inetOrgPerson', b'organizationalPerson', b'person', b'top'],
+        'uid': [uid.encode('utf-8')],
+        'givenName': [given_name.encode('utf-8')],
+        'sn': [sn.encode('utf-8')],
+        'cn': [cn.encode('utf-8')],
+        'userPassword': [password.encode('utf-8')] # O LDAP geralmente faz o hashing
+    }
+    if mail:
+        user_attrs['mail'] = [mail.encode('utf-8')]
+
+    # Converter para o formato que add_s espera (lista de tuplas)
+    ldap_user_attrs = []
+    for key, value in user_attrs.items():
+        ldap_user_attrs.append((key.encode('utf-8'), value))
+    
+    conn = None
+    try:
+        conn = get_ldap_connection()
+        
+        # 1. Adicionar usuário
+        conn.add_s(user_dn, ldap_user_attrs)
+        flash(f"Usuário '{uid}' criado com sucesso!", "success")
+
+        # 2. Adicionar usuário aos grupos selecionados
+        if selected_group_dns:
+            for group_dn in selected_group_dns:
+                try:
+                    ldap_utils.add_user_to_group(conn, user_dn, group_dn)
+                    flash(f"Usuário '{uid}' adicionado ao grupo '{group_dn.split(',')[0].split('=')[1]}'.", "info") # Mostra o CN do grupo
+                except ldap.LDAPError as e_group_add:
+                    flash(f"Erro ao adicionar usuário ao grupo '{group_dn.split(',')[0].split('=')[1]}': {str(e_group_add)}", "danger")
+        
+        return redirect(url_for('list_users_route'))
+
+    except ldap.ALREADY_EXISTS:
+        flash(f"Erro: Usuário '{uid}' (DN: {user_dn}) já existe!", "danger")
+    except ldap.LDAPError as e:
+        flash(f"Erro LDAP ao criar usuário: {str(e)}", "danger")
+    finally:
+        if conn:
+            conn.unbind_s()
+    
+    # Se chegou aqui, houve um erro na criação do usuário principal, recarregar o formulário
+    all_groups_on_error = []
+    try:
+        conn_temp = get_ldap_connection() # Nova conexão para buscar grupos
+        group_base_dn = app.config.get('LDAP_GROUP_BASE_DN', 'ou=groups,' + app.config['LDAP_BASE_DN'])
+        all_groups_on_error = ldap_utils.get_all_groups(conn_temp, group_base_dn)
+    except Exception as e_grp_load:
+        flash(f"Erro crítico ao tentar recarregar grupos após falha: {str(e_grp_load)}", "warning")
+    finally:
+        if conn_temp: conn_temp.unbind_s()
+
+    current_form_data_for_template_on_error = {
+        'uid': [uid], 'givenName': [given_name], 'sn': [sn], 'cn': [cn], 'mail': [mail]
+    }
+    return render_template('user_form.html', all_groups=all_groups_on_error, user_data=current_form_data_for_template_on_error, user_groups_dns=selected_group_dns)
 
 if __name__ == '__main__':
     app.run(debug=True) # debug=True SÓ para desenvolvimento
