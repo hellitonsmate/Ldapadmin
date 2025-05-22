@@ -207,5 +207,89 @@ def create_user_route():
     }
     return render_template('user_form.html', all_groups=all_groups_on_error, user_data=current_form_data_for_template_on_error, user_groups_dns=selected_group_dns)
 
+@app.route('/users/edit/<username>', methods=['POST'])
+@requires_auth
+def edit_user_route(username):
+    conn = None
+    try:
+        conn = get_ldap_connection()
+        user_dn_base = app.config['LDAP_USER_BASE_DN']
+        
+        # Obter o DN do usuário que está sendo editado
+        user_info = ldap_utils.get_user_details_by_uid(conn, user_dn_base, username, attributes=['dn'])
+        if not user_info:
+            flash(f"Usuário '{username}' não encontrado para edição.", "danger")
+            return redirect(url_for('list_users_route'))
+        user_dn = user_info['dn']
+
+        # Dados do formulário
+        given_name = request.form.get('givenName')
+        sn = request.form.get('sn')
+        cn = request.form.get('cn')
+        mail = request.form.get('mail')
+        selected_group_dns_new = set(request.form.getlist('groups')) # DNs dos grupos selecionados no form
+
+        # Modificar atributos básicos do usuário
+        # ATENÇÃO: uid (username) geralmente não é modificado. Se for, o DN muda.
+        # Se o uid for modificável, a lógica de user_dn e referências em grupos precisa ser MUITO cuidadosa (usar MOD_RDN).
+        # Por simplicidade, assumimos que uid não muda.
+
+        mods = []
+        # Para cada atributo, prepare a modificação se o valor mudou ou foi fornecido
+        # É importante pegar os valores antigos para comparar e só modificar se necessário,
+        # ou se o atributo não existir e estiver sendo adicionado.
+        # A biblioteca python-ldap.modlist.modifyModlist pode ser útil aqui para gerar 'mods'.
+        # Exemplo simplificado:
+        # (Este é um exemplo básico, para atributos multivalorados ou opcionais, refine)
+        if given_name: mods.append((ldap.MOD_REPLACE, b'givenName', [given_name.encode('utf-8')]))
+        if sn: mods.append((ldap.MOD_REPLACE, b'sn', [sn.encode('utf-8')]))
+        if cn: mods.append((ldap.MOD_REPLACE, b'cn', [cn.encode('utf-8')]))
+        
+        # Para o email, se estiver vazio no form, podemos querer remover o atributo.
+        if mail:
+            mods.append((ldap.MOD_REPLACE, b'mail', [mail.encode('utf-8')]))
+        else: # Se o campo email está vazio, e o usuário tinha um email, remove.
+            current_user_details = ldap_utils.get_user_details_by_uid(conn, user_dn_base, username, attributes=['mail'])
+            if current_user_details and 'mail' in current_user_details['attributes']:
+                 mods.append((ldap.MOD_DELETE, b'mail', None)) # Remove todas as ocorrências do atributo mail
+
+        if mods:
+            conn.modify_s(user_dn.encode('utf-8'), mods)
+            flash(f"Atributos do usuário '{username}' atualizados.", "success")
+
+        # Gerenciar associações de grupo
+        group_base_dn = app.config.get('LDAP_GROUP_BASE_DN', 'ou=groups,' + app.config['LDAP_BASE_DN'])
+        current_user_group_dns = set(ldap_utils.get_user_group_dns(conn, user_dn, group_base_dn))
+
+        groups_to_add_user_to = selected_group_dns_new - current_user_group_dns
+        groups_to_remove_user_from = current_user_group_dns - selected_group_dns_new
+
+        for group_dn in groups_to_add_user_to:
+            try:
+                ldap_utils.add_user_to_group(conn, user_dn, group_dn)
+                flash(f"Usuário '{username}' adicionado ao grupo '{group_dn.split(',')[0].split('=')[1]}'.", "info")
+            except ldap.LDAPError as e_add_grp:
+                flash(f"Erro ao adicionar '{username}' ao grupo '{group_dn.split(',')[0].split('=')[1]}': {e_add_grp}", "danger")
+
+        for group_dn in groups_to_remove_user_from:
+            try:
+                ldap_utils.remove_user_from_group(conn, user_dn, group_dn)
+                flash(f"Usuário '{username}' removido do grupo '{group_dn.split(',')[0].split('=')[1]}'.", "info")
+            except ldap.LDAPError as e_rem_grp:
+                flash(f"Erro ao remover '{username}' do grupo '{group_dn.split(',')[0].split('=')[1]}': {e_rem_grp}", "danger")
+        
+        return redirect(url_for('edit_user_form_route', username=username)) # Volta para o form de edição
+
+    except ldap.LDAPError as e:
+        flash(f"Erro LDAP ao editar usuário '{username}': {str(e)}", "danger")
+        # Pode redirecionar para lista ou tentar recarregar o form de edição com os dados atuais
+        return redirect(url_for('edit_user_form_route', username=username))
+    finally:
+        if conn:
+            conn.unbind_s()
+
+# Não se esqueça da rota para alterar senha, que seria separada (POST para /users/<username>/change-password)
+# ...
+
 if __name__ == '__main__':
     app.run(debug=True) # debug=True SÓ para desenvolvimento
