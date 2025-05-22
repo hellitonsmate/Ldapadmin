@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ "Criar Novo Usuário" if not user_data else "Editar Usuário" }}</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .form-container {
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .group-selection {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <h2>{{ "Criar Novo Usuário" if not user_data else "Editar Usuário: " + user_data.get('uid', [''])[0] }}</h2>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <form method="POST" action="{{ url_for('create_user_route') if not user_data else url_for('edit_user_route', username=user_data.get('uid', [''])[0]) }}">
+            <div class="form-group">
+                <label for="uid">Nome de Usuário (uid):</label>
+                <input type="text" class="form-control" id="uid" name="uid" value="{{ user_data.get('uid', [''])[0] if user_data else '' }}" required {{ "readonly" if user_data }}>
+            </div>
+            <div class="form-group">
+                <label for="givenName">Nome:</label>
+                <input type="text" class="form-control" id="givenName" name="givenName" value="{{ user_data.get('givenName', [''])[0] if user_data else '' }}" required>
+            </div>
+            <div class="form-group">
+                <label for="sn">Sobrenome:</label>
+                <input type="text" class="form-control" id="sn" name="sn" value="{{ user_data.get('sn', [''])[0] if user_data else '' }}" required>
+            </div>
+            <div class="form-group">
+                <label for="cn">Nome Completo (cn):</label>
+                <input type="text" class="form-control" id="cn" name="cn" value="{{ user_data.get('cn', [''])[0] if user_data else '' }}" required>
+                <small class="form-text text-muted">Geralmente Nome + Sobrenome.</small>
+            </div>
+            <div class="form-group">
+                <label for="mail">Email:</label>
+                <input type="email" class="form-control" id="mail" name="mail" value="{{ user_data.get('mail', [''])[0] if user_data else '' }}">
+            </div>
+            
+            {% if not user_data %} <div class="form-group">
+                <label for="userPassword">Senha:</label>
+                <input type="password" class="form-control" id="userPassword" name="userPassword" required>
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">Confirmar Senha:</label>
+                <input type="password" class="form-control" id="confirmPassword" name="confirmPassword" required>
+            </div>
+            {% endif %}
+
+            <div class="form-group">
+                <label>Grupos:</label>
+                <div class="group-selection">
+                    {% if all_groups %}
+                        {% for group in all_groups %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="groups" value="{{ group.dn }}" id="group_{{ group.cn[0] }}"
+                                   {% if user_data and group.dn in user_groups_dns %}checked{% endif %}>
+                            <label class="form-check-label" for="group_{{ group.cn[0] }}">
+                                {{ group.cn[0] }}
+                            </label>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p>Nenhum grupo encontrado.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">
+                {{ "Criar Usuário" if not user_data else "Salvar Alterações" }}
+            </button>
+            <a href="{{ url_for('list_users_route') }}" class="btn btn-secondary">Cancelar</a>
+        </form>
+        
+        {% if user_data %}
+        <hr>
+        <form method="POST" action="{{ url_for('change_user_password_route', username=user_data.get('uid', [''])[0]) }}" style="margin-top: 20px;">
+            <h4>Alterar Senha</h4>
+            <div class="form-group">
+                <label for="newPassword">Nova Senha:</label>
+                <input type="password" class="form-control" id="newPassword" name="newPassword" required>
+            </div>
+            <div class="form-group">
+                <label for="confirmNewPassword">Confirmar Nova Senha:</label>
+                <input type="password" class="form-control" id="confirmNewPassword" name="confirmNewPassword" required>
+            </div>
+            <button type="submit" class="btn btn-warning">Alterar Senha</button>
+        </form>
+        {% endif %}
+    </div>
+
+    <script>
+        // Script simples para preencher CN automaticamente se desejado, ou validar senhas
+        const givenNameInput = document.getElementById('givenName');
+        const snInput = document.getElementById('sn');
+        const cnInput = document.getElementById('cn');
+
+        function updateCn() {
+            if (givenNameInput && snInput && cnInput) {
+                 // Preenche CN apenas se estiver vazio, para não sobrescrever edições manuais
+                if (cnInput.value.trim() === '' || cnInput.value === (givenNameInput.value.trim() + ' ' + snInput.value.trim())) {
+                    cnInput.value = (givenNameInput.value.trim() + ' ' + snInput.value.trim()).trim();
+                }
+            }
+        }
+        if(givenNameInput) givenNameInput.addEventListener('input', updateCn);
+        if(snInput) snInput.addEventListener('input', updateCn);
+
+        // Validação de confirmação de senha (para criação)
+        const passwordInput = document.getElementById('userPassword');
+        const confirmPasswordInput = document.getElementById('confirmPassword');
+        if (passwordInput && confirmPasswordInput) {
+            const form = passwordInput.closest('form');
+            form.addEventListener('submit', function(event) {
+                if (passwordInput.value !== confirmPasswordInput.value) {
+                    alert("As senhas não coincidem!");
+                    event.preventDefault(); // Impede o envio do formulário
+                }
+            });
+        }
+        // Validação de confirmação de nova senha (para alteração)
+        const newPasswordInput = document.getElementById('newPassword');
+        const confirmNewPasswordInput = document.getElementById('confirmNewPassword');
+        if (newPasswordInput && confirmNewPasswordInput) {
+            const changePasswordForm = newPasswordInput.closest('form');
+             changePasswordForm.addEventListener('submit', function(event) {
+                if (newPasswordInput.value !== confirmNewPasswordInput.value) {
+                    alert("As novas senhas não coincidem!");
+                    event.preventDefault(); // Impede o envio do formulário
+                }
+            });
+        }
+    </script>
+</body>
+</html>
