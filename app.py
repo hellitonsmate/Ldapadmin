@@ -1,4 +1,7 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, flash
+
+import ldap_utils # seu módulo de funções LDAP
+import config # seu arquivo de configuração
 import ldap_utils
 import config # Seu arquivo de configuração
 
