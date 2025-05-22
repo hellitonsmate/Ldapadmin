@@ -47,7 +47,65 @@ def list_users_route():
         # Você pode querer passar uma mensagem de erro para o template
     return render_template('list_users.html', users=users)
 
-# ... outras rotas para criar, editar, deletar ...
+def get_ldap_connection():
+    """Helper para obter conexão LDAP."""
+    conn = ldap.initialize(app.config['LDAP_SERVER_URI'])
+    # Recomenda-se usar STARTTLS para conexões seguras se não for LDAPS
+    # conn.start_tls_s() 
+    conn.simple_bind_s(app.config['LDAP_BIND_DN'], app.config['LDAP_BIND_PASSWORD'])
+    return conn
+
+@app.route('/users/new', methods=['GET'])
+@requires_auth
+def create_user_form_route():
+    conn = None
+    try:
+        conn = get_ldap_connection()
+        # Supondo que você tenha uma base DN para grupos em sua configuração
+        group_base_dn = app.config.get('LDAP_GROUP_BASE_DN', 'ou=groups,' + app.config['LDAP_BASE_DN'])
+        all_groups = ldap_utils.get_all_groups(conn, group_base_dn)
+    except ldap.LDAPError as e:
+        flash(f"Erro ao carregar grupos do LDAP: {str(e)}", "danger")
+        all_groups = []
+    finally:
+        if conn:
+            conn.unbind_s()
+    return render_template('user_form.html', all_groups=all_groups, user_data=None, user_groups_dns=[])
+
+
+@app.route('/users/edit/<username>', methods=['GET'])
+@requires_auth
+def edit_user_form_route(username):
+    conn = None
+    user_data = None
+    all_groups = []
+    user_groups_dns = []
+    try:
+        conn = get_ldap_connection()
+        user_dn_base = app.config['LDAP_USER_BASE_DN']
+        user_info = ldap_utils.get_user_details_by_uid(conn, user_dn_base, username) # Você precisará criar esta função
+
+        if not user_info:
+            flash(f"Usuário '{username}' não encontrado.", "warning")
+            return redirect(url_for('list_users_route'))
+        
+        user_data = user_info['attributes'] # Ex: {'uid': ['testuser'], 'cn': ['Test User'], ...}
+        user_dn = user_info['dn']
+
+        group_base_dn = app.config.get('LDAP_GROUP_BASE_DN', 'ou=groups,' + app.config['LDAP_BASE_DN'])
+        all_groups = ldap_utils.get_all_groups(conn, group_base_dn)
+        
+        # Obter os grupos atuais do usuário
+        user_groups_dns = ldap_utils.get_user_group_dns(conn, user_dn, group_base_dn) # Você precisará criar esta função
+
+    except ldap.LDAPError as e:
+        flash(f"Erro ao carregar dados para edição: {str(e)}", "danger")
+        # Poderia redirecionar ou apenas mostrar o formulário com menos dados
+    finally:
+        if conn:
+            conn.unbind_s()
+    
+    return render_template('user_form.html', user_data=user_data, all_groups=all_groups, user_groups_dns=user_groups_dns)
 
 if __name__ == '__main__':
     app.run(debug=True) # debug=True SÓ para desenvolvimento
