@@ -1,1 +1,7 @@
-
+ # .gitignore
+    venv/
+    __pycache__/
+    *.pyc
+    config.py
+    instance/
+    *.sqlite3 
