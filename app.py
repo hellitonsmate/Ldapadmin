@@ -18,11 +18,9 @@ app.config.from_object(config) # Se config.py estiver no mesmo nível
 
 # Autenticação básica (MUITO SIMPLES - para fins de exemplo)
 # Em produção, use algo mais robusto!
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "password"
 
 def check_auth(username, password):
-    return username == ADMIN_USERNAME and password == ADMIN_PASSWORD
+    return username == app.config['ADMIN_USERNAME'] and password == app.config['ADMIN_PASSWORD']
 
 def requires_auth(f):
     @wraps(f)
