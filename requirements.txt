@@ -8,3 +8,5 @@ pyasn1==0.6.0 # Dependência do python-ldap
 pyasn1-modules==0.4.0 # Dependência do python-ldap
 python-ldap==3.4.4 # Versão do python-ldap
 Werkzeug==3.0.3
+pytest
+pytest-flask
